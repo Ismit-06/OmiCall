@@ -29,6 +29,9 @@ public class SecurityConfig {
         }
         String trimmed = frontendUrl.trim();
         if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+            if (!trimmed.contains(".")) {
+                return "https://" + trimmed + ".onrender.com";
+            }
             return "https://" + trimmed;
         }
         return trimmed;
