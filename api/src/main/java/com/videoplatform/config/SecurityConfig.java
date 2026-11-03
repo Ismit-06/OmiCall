@@ -95,12 +95,19 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
         String normalizedFrontendUrl = getNormalizedFrontendUrl();
-        config.setAllowedOrigins(List.of(
-                normalizedFrontendUrl,
-                frontendUrl,
-                "http://localhost:5173",
-                "http://127.0.0.1:5173"
-        ));
+        java.util.Set<String> origins = new java.util.HashSet<>();
+        origins.add(normalizedFrontendUrl);
+        if (frontendUrl != null && !frontendUrl.isBlank()) {
+            origins.add(frontendUrl);
+            if (!frontendUrl.contains(".")) {
+                origins.add("https://" + frontendUrl.trim() + ".onrender.com");
+            }
+        }
+        origins.add("https://love-video-web.onrender.com");
+        origins.add("http://localhost:5173");
+        origins.add("http://127.0.0.1:5173");
+
+        config.setAllowedOrigins(new java.util.ArrayList<>(origins));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);

@@ -45,9 +45,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(() => {
     // Redirect to backend OAuth2 authorization endpoint
-    let apiBase = import.meta.env.VITE_API_BASE_URL || '';
+    let apiBase = (import.meta.env.VITE_API_BASE_URL || '').trim();
+    if (apiBase.endsWith('/')) {
+      apiBase = apiBase.slice(0, -1);
+    }
     if (apiBase && !apiBase.startsWith('http://') && !apiBase.startsWith('https://')) {
-      apiBase = `https://${apiBase}`;
+      if (!apiBase.includes('.')) {
+        apiBase = `https://${apiBase}.onrender.com`;
+      } else {
+        apiBase = `https://${apiBase}`;
+      }
     }
     const targetUrl = apiBase ? `${apiBase}/oauth2/authorization/google` : '/oauth2/authorization/google';
     window.location.href = targetUrl;

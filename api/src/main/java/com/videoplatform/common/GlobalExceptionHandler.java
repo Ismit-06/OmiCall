@@ -48,11 +48,13 @@ public class GlobalExceptionHandler {
         ));
     }
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<?> handleGeneric(Exception ex) {
-        // Log internally but don't expose stack traces to callers
+        log.error("Unhandled exception occurred: ", ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
-                "error", "An internal error occurred",
+                "error", ex.getMessage() != null ? ex.getMessage() : "An internal error occurred",
                 "timestamp", Instant.now().toString()
         ));
     }
