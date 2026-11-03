@@ -39,8 +39,8 @@ spring:
 server.servlet.session:
   cookie:
     http-only: true
-    same-site: lax
-    secure: false
+    same-site: none
+    secure: true
     max-age: 7200
 
 app:
@@ -52,3 +52,4 @@ app:
   admin:
     bootstrap-enabled: ${ADMIN_BOOTSTRAP_ENABLED:false}
     bootstrap-google-id: ${ADMIN_BOOTSTRAP_GOOGLE_ID:}
+
