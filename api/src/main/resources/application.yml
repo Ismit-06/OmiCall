@@ -6,9 +6,9 @@ spring:
     name: video-platform-api
 
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:videoplatform}
-    username: ${DB_USER:postgres}
-    password: ${DB_PASSWORD:postgres}
+    url: ${SPRING_DATASOURCE_URL:${DB_URL:jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:videoplatform}?sslmode=${DB_SSLMODE:prefer}}}
+    username: ${SPRING_DATASOURCE_USERNAME:${DB_USER:postgres}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${DB_PASSWORD:postgres}}
     driver-class-name: org.postgresql.Driver
 
   jpa:
@@ -46,7 +46,7 @@ server.servlet.session:
 app:
   frontend-url: ${FRONTEND_URL:http://localhost:5173}
   livekit:
-    url: ${LIVEKIT_API_URL:http://localhost:7880}
+    url: ${LIVEKIT_URL:${LIVEKIT_API_URL:http://localhost:7880}}
     api-key: ${LIVEKIT_API_KEY:devkey}
     api-secret: ${LIVEKIT_API_SECRET:secretsecretsecretsecretsecretsecret32}
   admin:

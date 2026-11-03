@@ -12,10 +12,26 @@ services:
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: prod
-      - key: DB_URL
+      - key: DB_HOST
         fromDatabase:
           name: love-video-db
-          property: connectionString
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: love-video-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: love-video-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: love-video-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: love-video-db
+          property: password
       - key: LIVEKIT_URL
         sync: false
       - key: LIVEKIT_API_KEY
