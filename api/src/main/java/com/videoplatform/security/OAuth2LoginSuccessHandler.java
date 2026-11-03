@@ -26,6 +26,17 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
     @Value("${app.frontend-url:http://localhost:5173}")
     private String frontendUrl;
 
+    private String getNormalizedFrontendUrl() {
+        if (frontendUrl == null || frontendUrl.isBlank()) {
+            return "http://localhost:5173";
+        }
+        String trimmed = frontendUrl.trim();
+        if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+            return "https://" + trimmed;
+        }
+        return trimmed;
+    }
+
     public OAuth2LoginSuccessHandler(UserService userService) {
         this.userService = userService;
     }
@@ -47,6 +58,6 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
         request.getSession().setAttribute("userRole", user.getRole());
 
         // Redirect to frontend after login
-        response.sendRedirect(frontendUrl + "?login=success");
+        response.sendRedirect(getNormalizedFrontendUrl() + "?login=success");
     }
 }

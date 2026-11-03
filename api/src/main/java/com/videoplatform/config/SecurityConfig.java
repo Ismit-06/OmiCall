@@ -23,6 +23,17 @@ public class SecurityConfig {
     @Value("${app.frontend-url:http://localhost:5173}")
     private String frontendUrl;
 
+    private String getNormalizedFrontendUrl() {
+        if (frontendUrl == null || frontendUrl.isBlank()) {
+            return "http://localhost:5173";
+        }
+        String trimmed = frontendUrl.trim();
+        if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+            return "https://" + trimmed;
+        }
+        return trimmed;
+    }
+
     private final OAuth2LoginSuccessHandler oAuth2LoginSuccessHandler;
     private final UserStatusFilter userStatusFilter;
 
@@ -34,6 +45,7 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        String normalizedFrontendUrl = getNormalizedFrontendUrl();
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(csrf -> csrf.disable()) // Will use custom CSRF for API in production
@@ -47,7 +59,7 @@ public class SecurityConfig {
                 )
                 .oauth2Login(oauth -> oauth
                         .successHandler(oAuth2LoginSuccessHandler)
-                        .failureUrl(frontendUrl + "?login=error")
+                        .failureUrl(normalizedFrontendUrl + "?login=error")
                 )
                 .logout(logout -> logout
                         .logoutUrl("/api/auth/logout")
@@ -82,7 +94,13 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of(frontendUrl, "http://localhost:5173", "http://127.0.0.1:5173"));
+        String normalizedFrontendUrl = getNormalizedFrontendUrl();
+        config.setAllowedOrigins(List.of(
+                normalizedFrontendUrl,
+                frontendUrl,
+                "http://localhost:5173",
+                "http://127.0.0.1:5173"
+        ));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
