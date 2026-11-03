@@ -1,0 +1,39 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+  flyway:
+    enabled: false
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID:dummy-client-id}
+            client-secret: ${GOOGLE_CLIENT_SECRET:dummy-client-secret}
+            scope: openid, profile, email
+
+server.servlet.session:
+  cookie:
+    http-only: true
+    same-site: lax
+    secure: false
+
+app:
+  frontend-url: http://localhost:5173
+  livekit:
+    url: http://localhost:7880
+    api-key: devkey
+    api-secret: secretsecretsecretsecretsecretsecret32
+  admin:
+    bootstrap-enabled: false
+    bootstrap-google-id:

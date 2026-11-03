@@ -1,0 +1,29 @@
+# Binaries & Large Tools
+infra/livekit-bin/
+*.exe
+
+# Dependencies & Build Artifacts
+**/node_modules/
+**/dist/
+**/build/
+**/target/
+*.class
+
+# Environment and secrets
+.env
+.env.local
+*.env
+!.env.example
+
+# IDE / System
+.idea/
+*.iml
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
+*.log
