@@ -24,8 +24,15 @@ export async function apiClient<T>(endpoint: string, options: RequestInit = {}):
     headers.set('Content-Type', 'application/json');
   }
 
+  // Set a default 10-second timeout so requests never hang indefinitely when backend is waking up
+  let signal = options.signal;
+  if (!signal) {
+    signal = AbortSignal.timeout(10000);
+  }
+
   const response = await fetch(url, {
     ...options,
+    signal,
     headers,
     credentials: 'include',
   });
