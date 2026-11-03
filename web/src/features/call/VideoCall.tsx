@@ -1,11 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
-import { Room, RoomEvent, Track, VideoPresets } from 'livekit-client';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import {
+  Room,
+  RoomEvent,
+  Track,
+  VideoPresets,
+  RemoteParticipant,
+  RemoteTrackPublication,
+  RemoteTrack,
+} from 'livekit-client';
 
 interface VideoCallProps {
   token: string;
   livekitUrl: string;
   onDisconnect?: () => void;
   e2eeKey?: string;
+  partnerName?: string;
 }
 
 interface ChatMessage {
@@ -33,14 +42,26 @@ const COUPLE_PROMPTS = [
   "💌 If you had to describe our connection in 3 words, what would they be?"
 ];
 
-export default function VideoCall({ token, livekitUrl, onDisconnect, e2eeKey }: VideoCallProps) {
+export default function VideoCall({
+  token,
+  livekitUrl,
+  onDisconnect,
+  e2eeKey,
+  partnerName,
+}: VideoCallProps) {
   const [room, setRoom] = useState<Room | null>(null);
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [connectionState, setConnectionState] = useState<string>('connecting');
+  const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error'>('connecting');
   const [callDuration, setCallDuration] = useState<number>(0);
   const [e2eeActive, setE2eeActive] = useState<boolean>(false);
+  const [partnerConnected, setPartnerConnected] = useState<boolean>(false);
+  const [remoteName, setRemoteName] = useState<string>(partnerName || 'Stranger');
+
+  // Camera device selection (Omegle feature)
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>('');
 
   // In-call features
   const [showChat, setShowChat] = useState<boolean>(false);
@@ -48,11 +69,23 @@ export default function VideoCall({ token, livekitUrl, onDisconnect, e2eeKey }: 
   const [inputMessage, setInputMessage] = useState<string>('');
   const [reactions, setReactions] = useState<Reaction[]>([]);
   const [currentPrompt, setCurrentPrompt] = useState<string | null>(null);
+  const [networkQuality, setNetworkQuality] = useState<string>('Good');
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const activeRoomRef = useRef<Room | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Initialize background audio element for remote audio
+  useEffect(() => {
+    const audio = new Audio();
+    audio.autoplay = true;
+    remoteAudioRef.current = audio;
+    return () => {
+      audio.srcObject = null;
+    };
+  }, []);
 
   // Call duration counter
   useEffect(() => {
@@ -68,6 +101,40 @@ export default function VideoCall({ token, livekitUrl, onDisconnect, e2eeKey }: 
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
   }, [chatMessages, showChat]);
+
+  // Load available camera devices (from Omegle clone pattern)
+  useEffect(() => {
+    async function loadDevices() {
+      try {
+        const devices = await Room.getLocalDevices('videoinput');
+        setVideoDevices(devices);
+        if (devices.length > 0 && !selectedCameraId) {
+          setSelectedCameraId(devices[0].deviceId);
+        }
+      } catch (err) {
+        console.warn('Could not list media devices:', err);
+      }
+    }
+    loadDevices();
+  }, []);
+
+  // Helper to attach remote track properly
+  const attachRemoteTrack = useCallback((track: RemoteTrack) => {
+    if (track.kind === Track.Kind.Video) {
+      if (remoteVideoRef.current) {
+        track.attach(remoteVideoRef.current);
+      }
+    } else if (track.kind === Track.Kind.Audio) {
+      if (remoteAudioRef.current) {
+        track.attach(remoteAudioRef.current);
+      }
+    }
+  }, []);
+
+  // Helper to detach remote track
+  const detachRemoteTrack = useCallback((track: RemoteTrack) => {
+    track.detach();
+  }, []);
 
   useEffect(() => {
     if (!token || !livekitUrl) return;
@@ -85,30 +152,85 @@ export default function VideoCall({ token, livekitUrl, onDisconnect, e2eeKey }: 
       setE2eeActive(true);
     }
 
+    // 1. Connection lifecycle handlers
     newRoom.on(RoomEvent.Connected, () => {
-      console.log('LiveKit room connected successfully!');
+      console.log('[LiveKit] Room connected successfully:', newRoom.name);
+      setConnectionState('connected');
+
+      // Check for already-present remote participants
+      if (newRoom.remoteParticipants.size > 0) {
+        setPartnerConnected(true);
+        for (const [, participant] of newRoom.remoteParticipants) {
+          if (participant.name) {
+            setRemoteName(participant.name);
+          }
+          // Attach any already-published tracks
+          for (const pub of participant.trackPublications.values()) {
+            if (pub.isSubscribed && pub.track) {
+              attachRemoteTrack(pub.track as RemoteTrack);
+            }
+          }
+        }
+      }
+    });
+
+    newRoom.on(RoomEvent.Reconnecting, () => {
+      setConnectionState('reconnecting');
+    });
+
+    newRoom.on(RoomEvent.Reconnected, () => {
       setConnectionState('connected');
     });
 
     newRoom.on(RoomEvent.Disconnected, () => {
       setConnectionState('disconnected');
+      setPartnerConnected(false);
     });
 
-    newRoom.on(RoomEvent.TrackSubscribed, (track) => {
-      if (track.kind === Track.Kind.Video && remoteVideoRef.current) {
-        track.attach(remoteVideoRef.current);
+    // 2. Participant arrival and departure
+    newRoom.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
+      console.log('[LiveKit] Remote participant arrived:', participant.identity, participant.name);
+      setPartnerConnected(true);
+      if (participant.name) {
+        setRemoteName(participant.name);
       }
-      if (track.kind === Track.Kind.Audio) {
-        const audioEl = document.createElement('audio');
-        audioEl.autoplay = true;
-        track.attach(audioEl);
+      // Check already-published tracks on arrival
+      for (const pub of participant.trackPublications.values()) {
+        if (pub.isSubscribed && pub.track) {
+          attachRemoteTrack(pub.track as RemoteTrack);
+        }
       }
     });
 
-    newRoom.on(RoomEvent.TrackUnsubscribed, (track) => {
-      track.detach();
+    newRoom.on(RoomEvent.ParticipantDisconnected, () => {
+      console.log('[LiveKit] Remote participant left');
+      if (newRoom.remoteParticipants.size === 0) {
+        setPartnerConnected(false);
+      }
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = null;
+      }
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = null;
+      }
     });
 
+    // 3. Track subscription handlers (Critical for video/audio visibility)
+    newRoom.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _publication: RemoteTrackPublication, participant: RemoteParticipant) => {
+      console.log('[LiveKit] Track subscribed:', track.kind, 'from', participant.identity);
+      setPartnerConnected(true);
+      if (participant.name) {
+        setRemoteName(participant.name);
+      }
+      attachRemoteTrack(track);
+    });
+
+    newRoom.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
+      console.log('[LiveKit] Track unsubscribed:', track.kind);
+      detachRemoteTrack(track);
+    });
+
+    // 4. Sync local media button states
     const syncTrackStates = () => {
       if (!newRoom) return;
       setIsAudioMuted(!newRoom.localParticipant.isMicrophoneEnabled);
@@ -121,7 +243,12 @@ export default function VideoCall({ token, livekitUrl, onDisconnect, e2eeKey }: 
     newRoom.on(RoomEvent.TrackMuted, syncTrackStates);
     newRoom.on(RoomEvent.TrackUnmuted, syncTrackStates);
 
-    // Handle data channel packets (Chat, Reactions, Couple Prompts)
+    // 5. Connection Quality Indicator
+    newRoom.on(RoomEvent.ConnectionQualityChanged, (quality) => {
+      setNetworkQuality(String(quality));
+    });
+
+    // 6. Real-time data packets (In-call chat, reactions, prompts)
     const decoder = new TextDecoder();
     newRoom.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
       try {
@@ -133,7 +260,7 @@ export default function VideoCall({ token, livekitUrl, onDisconnect, e2eeKey }: 
             ...prev,
             {
               id: String(Date.now() + Math.random()),
-              sender: data.sender || 'Partner',
+              sender: data.sender || remoteName || 'Partner',
               text: data.text,
               isLocal: false,
               time: data.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -149,17 +276,21 @@ export default function VideoCall({ token, livekitUrl, onDisconnect, e2eeKey }: 
       }
     });
 
-    // Connect and publish camera/mic
+    // 7. Connect WebSocket and publish Camera/Microphone
     const wsUrl = livekitUrl.replace(/^http/, 'ws');
 
     newRoom.connect(wsUrl, token)
       .then(async () => {
         try {
+          // Enable both camera & mic
           await newRoom.localParticipant.enableCameraAndMicrophone();
-          const cameraTrack = newRoom.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
-          if (cameraTrack && localVideoRef.current) {
-            cameraTrack.attach(localVideoRef.current);
+
+          // Ensure local preview video is attached
+          const videoTrackPub = Array.from(newRoom.localParticipant.videoTrackPublications.values())[0];
+          if (videoTrackPub?.track && localVideoRef.current) {
+            videoTrackPub.track.attach(localVideoRef.current);
           }
+
           setIsAudioMuted(!newRoom.localParticipant.isMicrophoneEnabled);
           setIsVideoMuted(!newRoom.localParticipant.isCameraEnabled);
         } catch (mediaErr) {
@@ -181,7 +312,23 @@ export default function VideoCall({ token, livekitUrl, onDisconnect, e2eeKey }: 
       activeRoomRef.current = null;
       newRoom.disconnect();
     };
-  }, [token, livekitUrl]);
+  }, [token, livekitUrl, attachRemoteTrack, detachRemoteTrack, e2eeKey]);
+
+  // Switch camera device (Omegle feature)
+  const handleSwitchCamera = async (deviceId: string) => {
+    setSelectedCameraId(deviceId);
+    if (!room) return;
+    try {
+      await room.switchActiveDevice('videoinput', deviceId);
+      // Re-attach local camera track to local video element
+      const videoTrackPub = Array.from(room.localParticipant.videoTrackPublications.values())[0];
+      if (videoTrackPub?.track && localVideoRef.current) {
+        videoTrackPub.track.attach(localVideoRef.current);
+      }
+    } catch (err) {
+      console.error('Failed to switch camera device:', err);
+    }
+  };
 
   const triggerReaction = (emoji: string) => {
     const id = Date.now() + Math.random();
@@ -250,43 +397,39 @@ export default function VideoCall({ token, livekitUrl, onDisconnect, e2eeKey }: 
   const toggleMic = async () => {
     if (!room) return;
     const willEnable = isAudioMuted;
-    setIsAudioMuted(!willEnable);
     try {
       await room.localParticipant.setMicrophoneEnabled(willEnable);
       setIsAudioMuted(!room.localParticipant.isMicrophoneEnabled);
     } catch (err) {
       console.error('[toggleMic] error in setMicrophoneEnabled:', err);
-      setIsAudioMuted(!room.localParticipant.isMicrophoneEnabled);
     }
   };
 
   const toggleCam = async () => {
     if (!room) return;
     const willEnable = isVideoMuted;
-    setIsVideoMuted(!willEnable);
     try {
       await room.localParticipant.setCameraEnabled(willEnable);
       setIsVideoMuted(!room.localParticipant.isCameraEnabled);
       if (willEnable && localVideoRef.current) {
-        const camTrack = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
-        if (camTrack) camTrack.attach(localVideoRef.current);
+        const videoTrackPub = Array.from(room.localParticipant.videoTrackPublications.values())[0];
+        if (videoTrackPub?.track) {
+          videoTrackPub.track.attach(localVideoRef.current);
+        }
       }
     } catch (err) {
       console.error('[toggleCam] error in setCameraEnabled:', err);
-      setIsVideoMuted(!room.localParticipant.isCameraEnabled);
     }
   };
 
   const toggleScreenShare = async () => {
     if (!room) return;
     const willShare = !isScreenSharing;
-    setIsScreenSharing(willShare);
     try {
       await room.localParticipant.setScreenShareEnabled(willShare);
       setIsScreenSharing(room.localParticipant.isScreenShareEnabled);
     } catch (err) {
       console.warn('Screen share error:', err);
-      setIsScreenSharing(room.localParticipant.isScreenShareEnabled);
     }
   };
 
@@ -304,26 +447,49 @@ export default function VideoCall({ token, livekitUrl, onDisconnect, e2eeKey }: 
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center', position: 'relative' }}>
-      {/* Floating Animated Reactions */}
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', position: 'relative' }}>
+      {/* Floating Reaction Emojis */}
       {reactions.map(r => (
         <span
           key={r.id}
-          className="reaction-particle"
-          style={{ left: `${r.left}%` }}
+          className="reaction-heart"
+          style={{ left: `${r.left}%`, bottom: '80px', pointerEvents: 'none' }}
         >
           {r.emoji}
         </span>
       ))}
 
-      {/* Top Header Controls & Metadata */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', maxWidth: '800px' }}>
-        <div>
-          <span>Status: <strong>{connectionState}</strong></span>
-          {e2eeActive && <span className="status-badge" style={{ marginLeft: '8px' }}>🔐 E2EE Verified</span>}
+      {/* Top Status Bar: Call Duration, Connection & Encryption Indicators */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', maxWidth: '800px', fontSize: '0.9rem', color: '#4b5563', padding: '0 8px', flexWrap: 'wrap', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span className="live-dot" style={{ background: connectionState === 'connected' ? '#10b981' : '#f59e0b' }} />
+          <span>{connectionState === 'connected' ? `Call: ${formatDuration(callDuration)}` : connectionState}</span>
+          {e2eeActive && <span className="status-badge" style={{ marginLeft: '4px' }}>🔒 E2EE Direct</span>}
         </div>
-        <div>
-          <span>Duration: <strong>{formatDuration(callDuration)}</strong></span>
+
+        {/* Camera Selector (Omegle feature) */}
+        {videoDevices.length > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '0.8rem' }}>📷 Cam:</span>
+            <select
+              value={selectedCameraId}
+              onChange={(e) => handleSwitchCamera(e.target.value)}
+              style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #d1d5db', fontSize: '0.8rem' }}
+            >
+              {videoDevices.map(d => (
+                <option key={d.deviceId} value={d.deviceId}>
+                  {d.label || `Camera ${d.deviceId.slice(0, 5)}`}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ fontSize: '0.8rem', color: partnerConnected ? '#059669' : '#9ca3af' }}>
+            {partnerConnected ? `Connected with ${remoteName}` : 'Waiting for partner...'}
+          </span>
+          <span style={{ fontSize: '0.75rem', opacity: 0.6 }}>Signal: {networkQuality}</span>
         </div>
       </div>
 
@@ -341,18 +507,43 @@ export default function VideoCall({ token, livekitUrl, onDisconnect, e2eeKey }: 
       )}
 
       {/* Video Streams Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: showChat ? '1fr 1fr' : '1fr 1fr', gap: '16px', width: '100%', maxWidth: '800px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', width: '100%', maxWidth: '800px' }}>
+        {/* Local Stream (You) */}
         <div style={{ position: 'relative', background: '#000', borderRadius: '8px', minHeight: '260px', overflow: 'hidden' }}>
-          <video ref={localVideoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <video
+            ref={localVideoRef}
+            autoPlay
+            playsInline
+            muted
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
           <span style={{ position: 'absolute', bottom: '8px', left: '8px', color: '#fff', background: 'rgba(0,0,0,0.6)', padding: '2px 8px', borderRadius: '4px', fontSize: '0.8rem' }}>
             You (Local) {isVideoMuted && '🔇'}
           </span>
         </div>
 
-        <div style={{ position: 'relative', background: '#111', borderRadius: '8px', minHeight: '260px', overflow: 'hidden' }}>
-          <video ref={remoteVideoRef} autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        {/* Remote Stream (Partner) */}
+        <div style={{ position: 'relative', background: '#111', borderRadius: '8px', minHeight: '260px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: partnerConnected ? 'block' : 'none'
+            }}
+          />
+          {!partnerConnected && (
+            <div style={{ color: '#9ca3af', textAlign: 'center', padding: '20px' }}>
+              <div style={{ fontSize: '2rem', marginBottom: '8px' }}>⏳</div>
+              <p style={{ margin: 0, fontWeight: 500 }}>Waiting for partner to join...</p>
+              <p style={{ margin: 0, fontSize: '0.8rem', opacity: 0.7 }}>Share your room code or link to begin</p>
+            </div>
+          )}
           <span style={{ position: 'absolute', bottom: '8px', left: '8px', color: '#fff', background: 'rgba(0,0,0,0.6)', padding: '2px 8px', borderRadius: '4px', fontSize: '0.8rem' }}>
-            Remote Participant
+            {partnerConnected ? remoteName : 'Partner'}
           </span>
         </div>
       </div>
